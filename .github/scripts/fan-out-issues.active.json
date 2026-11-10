@@ -1,0 +1,47 @@
+{
+ "schema": "mog.fan-out-issues.v1",
+ "regla": "La puerta de issues es UNA: vive en mog-corporation/.github (workflow reutilizable + validador + taxonomia). Cada repo destino lleva solo un caller fino que fija el SHA del bundle. Aqui esta la lista de destinos y el contrato que el banco mide; no hay otra copia de la logica ni del vocabulario.",
+ "workflow": {
+  "ruta": ".github/workflows/valida-ticket.yml",
+  "job": "puerta",
+  "input_pin": "bundle_sha"
+ },
+ "caller": {
+  "ruta": ".github/workflows/gate-issue-form.yml",
+  "plantilla": ".github/plantillas/caller-gate-issue.yml",
+  "placeholder": "<SHA40_DEL_MERGE>",
+  "permisos": {
+   "contents": "read",
+   "issues": "write"
+  }
+ },
+ "plantillas_org": [
+  ".github/ISSUE_TEMPLATE/ticket.yml",
+  ".github/ISSUE_TEMPLATE/config.yml"
+ ],
+ "repos": [
+  "mog-corporation/mog-control-plane",
+  "mog-corporation/mog-containers-m1",
+  "mog-corporation/mog-suite",
+  "mog-corporation/mogbot-personal-skills",
+  "mog-corporation/mogautomation-arch",
+  "mog-corporation/mog-data-engine",
+  "mog-corporation/mog-federation"
+ ],
+ "excluidos": [
+  {
+   "repo": "mog-corporation/mog-universe",
+   "motivo": "Referencia: conserva su plantilla y su gate propios desde #620. Precedencia repo>org: no hereda ni colisiona."
+  }
+ ],
+ "herencia": {
+  "requiere_repo_publico": true,
+  "precedencia": "repo>org",
+  "nota": "Un repo sin .github/ISSUE_TEMPLATE propio hereda las plantillas de la org; en cuanto define la carpeta, las de la org no se usan en absoluto (ni el Ticket ni el config). Por eso el banco distingue HEREDA de PROPIA en vez de suponer."
+ },
+ "etiquetas": {
+  "modo": "aditivo",
+  "retira": false,
+  "nota": "Alta de las 15 etiquetas del vocabulario en cada repo destino. Ninguna retirada: ANTI-DERIVA y cualquier etiqueta existente se quedan donde estan y sus issues no se tocan."
+ }
+}

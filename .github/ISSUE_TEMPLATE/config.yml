@@ -1,0 +1,13 @@
+# Canónico de la organización: lo hereda todo repo sin plantilla propia.
+# El repositorio es registro de trabajo, no canal de mensajes.
+# Aviso y decisión apuntan al bus/acta de la corporación (mog-universe): un solo canal, no uno por repo.
+# Aviso -> Discussions. Decision -> acta. Ticket -> formulario `Ticket` (unico habilitado: el gate issues:opened
+# es fail-closed y una segunda plantilla sin los seis campos seria un bypass del gate).
+blank_issues_enabled: false
+contact_links:
+  - name: Aviso o incidencia de operación (Discussions)
+    url: https://github.com/mog-corporation/mog-universe/discussions/new?category=announcements
+    about: Caídas, errores de conector y avisos al equipo. No se abren como issue.
+  - name: Decisión de mesa (acta)
+    url: https://github.com/mog-corporation/mog-universe/discussions/new?category=general
+    about: Las decisiones van a acta con título «ACTA · tema · YYYY-MM-DD». No se abren como issue.

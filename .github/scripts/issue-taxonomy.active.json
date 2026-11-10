@@ -1,0 +1,121 @@
+{
+ "schema": "mog.issue-taxonomy.v1",
+ "regla": "El repositorio de issues es el REGISTRO DE TRABAJO, no el bus. Un ticket nace con Writer, verificador independiente, criterio de cierre ejecutable, rutas afectadas, repo destino y JOB; sin esos seis campos no entra (gate fail-closed en issues:opened). Los avisos de operacion van a Discussions y las decisiones a acta: el issue no es canal de mensajes.",
+ "retiradas": [],
+ "retirada_motivo": "En la fan-out la sincronizacion de etiquetas es ADITIVA: crea las 15 del vocabulario y no retira ninguna. ANTI-DERIVA se retiro solo en mog-universe (donde era cajon unico de los 47 issues); en los repos destino sigue viva y con ella sus issues, porque este encargo no toca issues existentes. Si algun dia se retira una etiqueta aqui, hara falta una decision explicita y su dictamen: no se cuela por un --aplica.",
+ "formulario": {
+  "writer": "Writer",
+  "verificador": "Verificador independiente",
+  "criterio": "Criterio de cierre ejecutable",
+  "rutas": "Rutas afectadas",
+  "repo_destino": "Repo destino",
+  "job": "JOB"
+ },
+ "requeridos": [
+  "writer",
+  "verificador",
+  "criterio",
+  "rutas",
+  "repo_destino",
+  "job"
+ ],
+ "criterio_prefijos": [
+  "python3",
+  "python",
+  "gh",
+  "bash",
+  "sh",
+  "node",
+  "npm",
+  "pnpm",
+  "make",
+  "curl",
+  "pwsh"
+ ],
+ "prefijos": {
+  "area": "area:",
+  "prioridad": "prioridad:",
+  "estado": "estado:"
+ },
+ "areas": {
+  "motor-ci": {
+   "descripcion": "Motor de fusion, puertas, workflows y medidores (mide_resenas, motor_fusion_mog, gates).",
+   "color": "1D76DB"
+  },
+  "identidades": {
+   "descripcion": "Registro de identidades, credential_group, altas de actores y firmas.",
+   "color": "5319E7"
+  },
+  "conectores": {
+   "descripcion": "Conectores MoGbot, gateway, bus y superficies de ejecucion.",
+   "color": "006B75"
+  },
+  "canon": {
+   "descripcion": "Indice de codigo canon, contratos y sellos de gobernanza.",
+   "color": "0E8A16"
+  },
+  "projects": {
+   "descripcion": "Tableros de Projects, campos obligatorios y reconciliacion de items.",
+   "color": "FBCA04"
+  },
+  "front": {
+   "descripcion": "HMI, landing, apps y despliegue de interfaz.",
+   "color": "D93F0B"
+  }
+ },
+ "prioridad": {
+  "p0": {
+   "descripcion": "Bloquea fusion o produce rojo falso: se atiende antes de cualquier otra cosa.",
+   "color": "B60205"
+  },
+  "p1": {
+   "descripcion": "Degrada la cadena de entrega o deja trabajo sin verificar.",
+   "color": "D93F0B"
+  },
+  "p2": {
+   "descripcion": "Mejora acotada con criterio de cierre ya medido.",
+   "color": "FBCA04"
+  },
+  "p3": {
+   "descripcion": "Deuda documentada sin impacto inmediato.",
+   "color": "0E8A16"
+  }
+ },
+ "estado": {
+  "en-curso": {
+   "descripcion": "Con Writer activo sobre un HEAD declarado.",
+   "color": "1D76DB"
+  },
+  "verificando": {
+   "descripcion": "Esperando dictamen de la contraparte independiente sobre el HEAD exacto.",
+   "color": "5319E7"
+  },
+  "bloqueado": {
+   "descripcion": "Depende de otro issue o de una puerta en rojo; el issue debe decir cual.",
+   "color": "B60205"
+  },
+  "decision-pendiente": {
+   "descripcion": "Esperando decision humana; no avanza por trabajo tecnico.",
+   "color": "FBCA04"
+  }
+ },
+ "canal": {
+  "ticket": {
+   "destino": "issues"
+  },
+  "aviso": {
+   "destino": "discussions",
+   "proposito": "announcement"
+  },
+  "decision": {
+   "destino": "acta",
+   "formato_titulo": "ACTA · <tema> · <YYYY-MM-DD>",
+   "categoria_discussions": "general"
+  }
+ },
+ "gate": {
+  "etiqueta_rechazo": "necesita-plantilla",
+  "color_rechazo": "B60205",
+  "descripcion_rechazo": "Issue sin el formulario Ticket completo: falta Writer, verificador, criterio ejecutable, rutas, repo destino o JOB."
+ }
+}

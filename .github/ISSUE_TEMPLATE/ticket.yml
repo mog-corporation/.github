@@ -1,0 +1,110 @@
+name: Ticket
+description: Trabajo con Writer, verificador independiente y criterio de cierre ejecutable. Sin esos campos el gate lo rechaza.
+title: "[TICKET] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Esto es el **registro de trabajo**, no el bus. Un aviso de operación va a Discussions; una decisión va a acta.
+        Este formulario no admite atajos: si falta Writer, verificador, criterio ejecutable, rutas, repo destino o JOB,
+        el gate `issues:opened` comenta qué falta y etiqueta el issue con `necesita-plantilla`.
+
+        Este formulario es el **canónico de la organización** (`mog-corporation/.github`): cualquier repo sin
+        plantilla propia lo hereda, y las opciones de área, prioridad y estado salen de
+        `.github/scripts/issue-taxonomy.active.json` (fuente única: no se copia a los repos).
+  - type: input
+    id: writer
+    attributes:
+      label: Writer
+      description: Login que escribe el trabajo. No puede ser el mismo que el verificador.
+      placeholder: qoderai[bot]
+    validations:
+      required: true
+  - type: input
+    id: verificador
+    attributes:
+      label: Verificador independiente
+      description: Login que mide sobre el HEAD exacto. Debe diferir del Writer.
+      placeholder: mog-verificador
+    validations:
+      required: true
+  - type: textarea
+    id: criterio
+    attributes:
+      label: Criterio de cierre ejecutable
+      description: Un comando que, corrido, dice si está hecho. No vale "revisar" ni "queda funcionando".
+      placeholder: python3 .github/scripts/<script>.py --check
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: rutas
+    attributes:
+      label: Rutas afectadas
+      description: Ficheros o directorios que toca el cambio. Una por línea si son varios.
+      placeholder: .github/scripts/motor_fusion_mog.py
+    validations:
+      required: true
+  - type: input
+    id: repo_destino
+    attributes:
+      label: Repo destino
+      description: Repositorio donde aterriza el cambio, con formato OWNER/REPO.
+      placeholder: mog-corporation/<repo>
+    validations:
+      required: true
+  - type: input
+    id: job
+    attributes:
+      label: JOB
+      description: Identificador de correlación. Si el trabajo no tiene JOB todavía, se abre uno y se pega aquí; NONE no se acepta.
+      placeholder: j8851de79d515
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área
+      description: Programa al que pertenece el trabajo. El gate valida que exista en la taxonomía.
+      options:
+        - motor-ci
+        - identidades
+        - conectores
+        - canon
+        - projects
+        - front
+    validations:
+      required: true
+  - type: dropdown
+    id: prioridad
+    attributes:
+      label: Prioridad
+      description: p0 bloquea fusión o produce rojo falso; p1 degrada la cadena; p2 mejora acotada; p3 deuda.
+      options:
+        - p0
+        - p1
+        - p2
+        - p3
+    validations:
+      required: true
+  - type: dropdown
+    id: estado
+    attributes:
+      label: Estado
+      description: Estado inicial del ticket.
+      options:
+        - en-curso
+        - verificando
+        - bloqueado
+        - decision-pendiente
+    validations:
+      required: true
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto y evidencia
+      description: Qué se midió y con qué. Enlaces al PR/issue; la evidencia larga va al PR, aquí solo el ancla.
+      placeholder: Medido el 2026-11-10 sobre main b7916559; ver issue #NNN.
+    validations:
+      required: true
