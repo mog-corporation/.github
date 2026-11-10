@@ -76,21 +76,45 @@ jobs:
       - name: Dependencias del banco
         run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
 
-      # Un solo rango para los dos medidores. En un PR: merge-base(rama base, head). Fuera de un PR: el ultimo
+      # Un solo rango para los dos medidores. En un PR: merge-base(base, head). Fuera de un PR: el ultimo
       # commit (evidencia en main via workflow_dispatch). Si no se puede acotar el rango, no se mide.
+      #
+      # El base sale del EVENTO (`base.sha`), que viaja en el pago del PR: cero red, cero credenciales. El
+      # checkout de arriba ya trae todas las ramas, asi que `origin/<base.ref>` es el segundo recurso sin red.
+      # Solo si el objeto del base no esta (PR atrasado o rama base reescrita) se hace UN fetch del sha exacto,
+      # autenticado con el token del job: un fetch ciego sin credenciales revienta en repo privado con
+      # "fatal: could not read Username for 'https://github.com'" (medido: 5 de 5 callers rojos).
       - name: Acotar el rango revisado
         id: rango
         env:
           EVENTO: ${{ github.event_name }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          TOKEN: ${{ github.token }}
+          GIT_TERMINAL_PROMPT: "0"
         run: |
           set -euo pipefail
           base=""
-          if [ "$EVENTO" = "pull_request" ] && [ -n "${BASE_REF:-}" ]; then
-            git fetch --no-tags --quiet origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-            base=$(git merge-base "origin/${BASE_REF}" HEAD) || base=""
+          if [ "$EVENTO" = "pull_request" ]; then
+            # 1) base.sha del evento: sin red y sin credenciales.
+            # 2) origin/<base.ref>: ya presente por el checkout (fetch-depth 0), tampoco toca la red.
+            for cand in "${BASE_SHA:-}" "origin/${BASE_REF:-}"; do
+              [ -n "$cand" ] || continue
+              git rev-parse -q --verify "${cand}^{commit}" >/dev/null 2>&1 || continue
+              if base=$(git merge-base "$cand" HEAD 2>/dev/null); then break; fi
+              base=""
+            done
+            # 3) Ultimo recurso: UN fetch del sha concreto, con credencial. Nada de actualizar refs enteras.
+            if [ -z "$base" ] && [ -n "${BASE_SHA:-}" ] && [ -n "${TOKEN:-}" ]; then
+              echo "::add-mask::$TOKEN"
+              auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+              if git -c "http.extraheader=AUTHORIZATION: basic $auth" \
+                   fetch --no-tags origin "$BASE_SHA" >/dev/null 2>&1; then
+                base=$(git merge-base "$BASE_SHA" HEAD 2>/dev/null || true)
+              fi
+            fi
             if [ -z "$base" ]; then
-              echo "::error::BASE_NO_MEDIBLE no hay merge-base con origin/${BASE_REF}: no se puede acotar el rango"
+              echo "::error::BASE_NO_MEDIDO sin merge-base con base.sha (${BASE_SHA:-?}) ni origin/${BASE_REF:-?}, y el fetch del sha exacto no lo trajo: no se acota el rango"
               exit 2
             fi
           elif git rev-parse -q --verify HEAD~1 >/dev/null 2>&1; then
