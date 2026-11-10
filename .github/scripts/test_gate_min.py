@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -126,8 +127,22 @@ def audita_workflow(texto: str, reg: dict) -> list[str]:
         errores.append("SIN_ENSURE_GITLEAKS")
     if "merge-base" not in texto or "--log-opts" not in texto:
         errores.append("GITLEAKS_SIN_RANGO")
-    if re.search(r"(?m)^\s*git\s+fetch\b", texto):
-        errores.append("RANGO_CON_FETCH (el checkout ya trae las ramas; un fetch sin credenciales rompe en repo privado)")
+    # El base del rango sale del EVENTO (`base.sha`), sin red ni credenciales. `origin/<base.ref>` es el
+    # segundo recurso (ya viene del checkout). Un fetch solo se admite para traer ESE sha concreto y con
+    # credencial: un fetch ciego sin token revienta en repos privados (medido: 5 de 5 callers rojos).
+    if "${{ github.event.pull_request.base.sha }}" not in texto:
+        errores.append("RANGO_SIN_ENV_BASE_SHA (el base tiene que venir del evento, no de la red)")
+    elif "${BASE_SHA:-}" not in texto or "origin/${BASE_REF:-}" not in texto:
+        errores.append("RANGO_SIN_CANDIDATOS (base.sha del evento y luego origin/<base.ref>)")
+    elif texto.index("origin/${BASE_REF:-}") < texto.index("${BASE_SHA:-}"):
+        errores.append("RANGO_BASE_REF_ANTES_QUE_EVENTO (el evento va primero: no depende de refs ni de red)")
+    if 'fetch --no-tags origin "$BASE_SHA"' not in texto:
+        errores.append("RANGO_SIN_FETCH_DEL_SHA (si el objeto del base no esta, un unico fetch de ese sha)")
+    if "http.extraheader=AUTHORIZATION: basic" not in texto or "::add-mask::$TOKEN" not in texto:
+        errores.append("FETCH_SIN_CREDENCIALES (un fetch sin token falla en repo privado: exit 128)")
+    resto = texto.replace('fetch --no-tags origin "$BASE_SHA"', "")
+    if any(re.match(r"\s*git\b", linea) and re.search(r"\bfetch\b", linea) for linea in resto.splitlines()):
+        errores.append("RANGO_CON_FETCH_CIEGO (solo se admite el fetch del sha exacto, autenticado)")
     if "--no-git" in texto:
         errores.append("GITLEAKS_ESCANEA_ARBOL (arrastra deuda ajena al PR)")
     if "ref: ${{ inputs.bundle_sha }}" not in texto:
@@ -135,6 +150,16 @@ def audita_workflow(texto: str, reg: dict) -> list[str]:
     if '--base "$BASE"' not in texto or "BASE: ${{ steps.rango.outputs.base }}" not in texto:
         errores.append("BANCO_SIN_BASE (H4 y gitleaks no comparten rango)")
     return errores
+
+
+def bloque_del_paso(texto: str, paso_id: str) -> str:
+    """El `run:` real de un paso, para ejecutarlo tal cual (el banco tambien mide el camino del rango)."""
+    d = yaml.safe_load(texto)
+    job = (d.get("jobs") or {})[list(d["jobs"])[0]]
+    for paso in job.get("steps") or []:
+        if paso.get("id") == paso_id:
+            return paso["run"]
+    raise AssertionError("paso %r no encontrado en el workflow" % paso_id)
 
 
 def audita_caller(texto: str, reg: dict) -> list[str]:
@@ -422,9 +447,22 @@ class ContratoDelWorkflow(unittest.TestCase):
         flojo = self.texto.replace("ref: ${{ inputs.bundle_sha }}", "ref: main")
         self.assertIn("BUNDLE_NO_PINNEADO_AL_INPUT", " ".join(audita_workflow(flojo, self.reg)))
 
-    def test_mutante_con_fetch(self):
+    def test_mutante_fetch_ciego(self):
         flojo = self.texto.replace('base=""\n          if', 'base=""\n          git fetch --quiet origin main\n          if')
-        self.assertIn("RANGO_CON_FETCH", " ".join(audita_workflow(flojo, self.reg)))
+        self.assertIn("RANGO_CON_FETCH_CIEGO", " ".join(audita_workflow(flojo, self.reg)))
+
+    def test_mutante_fetch_sin_credenciales(self):
+        flojo = self.texto.replace("http.extraheader=AUTHORIZATION: basic", "http.extraheader=X")
+        self.assertIn("FETCH_SIN_CREDENCIALES", " ".join(audita_workflow(flojo, self.reg)))
+
+    def test_mutante_base_por_ref_antes_que_evento(self):
+        flojo = self.texto.replace('for cand in "${BASE_SHA:-}" "origin/${BASE_REF:-}"; do',
+                                   'for cand in "origin/${BASE_REF:-}" "${BASE_SHA:-}"; do')
+        self.assertIn("RANGO_BASE_REF_ANTES_QUE_EVENTO", " ".join(audita_workflow(flojo, self.reg)))
+
+    def test_mutante_base_no_viene_del_evento(self):
+        flojo = self.texto.replace("${{ github.event.pull_request.base.sha }}", "${{ github.sha }}")
+        self.assertIn("RANGO_SIN_ENV_BASE_SHA", " ".join(audita_workflow(flojo, self.reg)))
 
     def test_mutante_sin_base_compartida(self):
         flojo = self.texto.replace('--base "$BASE"', "")
@@ -434,6 +472,107 @@ class ContratoDelWorkflow(unittest.TestCase):
         flojo = self.texto.replace("uses: ./bundle/.github/actions/ensure-gitleaks",
                                    "uses: ./bundle/.github/actions/nada")
         self.assertIn("SIN_ENSURE_GITLEAKS", " ".join(audita_workflow(flojo, self.reg)))
+
+
+class RangoDelWorkflow(unittest.TestCase):
+    """Ejercita el `run:` REAL del paso del rango: sin red y sin credenciales (control negativo del fetch)."""
+
+    def setUp(self):
+        self.bloque = bloque_del_paso(WORKFLOW.read_text(encoding="utf-8"), "rango")
+
+    def _git(self, raiz: Path, *args: str) -> str:
+        return subprocess.run(["git", "-C", str(raiz), "-c", "user.email=a@b", "-c", "user.name=a", *args],
+                              check=True, capture_output=True, text=True).stdout
+
+    def _commit(self, raiz: Path, msg: str) -> None:
+        self._git(raiz, "add", "-A")
+        self._git(raiz, "commit", "-qm", msg)
+
+    def _repo(self) -> tuple[Path, str]:
+        """Repo local SIN remoto: como el checkout del runner, pero sin ninguna credencial disponible."""
+        raiz = Path(tempfile.mkdtemp(prefix="gatemin-rango-"))
+        self._git(raiz, "init", "-q", "-b", "main")
+        (raiz / "a.txt").write_text("1\n", encoding="utf-8")
+        self._commit(raiz, "base")
+        base = self._git(raiz, "rev-parse", "HEAD").strip()
+        self._git(raiz, "checkout", "-q", "-b", "feature")
+        (raiz / "b.txt").write_text("2\n", encoding="utf-8")
+        self._commit(raiz, "head")
+        self._git(raiz, "checkout", "-q", "main")
+        (raiz / "c.txt").write_text("3\n", encoding="utf-8")
+        self._commit(raiz, "main avanza")
+        self._git(raiz, "checkout", "-q", "feature")
+        return raiz, base
+
+    def _corre(self, raiz: Path, **env: str) -> tuple[subprocess.CompletedProcess, str]:
+        salida = raiz / "salida_github"
+        salida.write_text("", encoding="utf-8")
+        e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        e.update({"GITHUB_OUTPUT": str(salida), "GIT_TERMINAL_PROMPT": "0",
+                  "EVENTO": "", "BASE_REF": "", "BASE_SHA": "", "TOKEN": ""})
+        e.update(env)
+        p = subprocess.run(["/bin/bash", "-c", self.bloque], cwd=str(raiz), env=e,
+                           capture_output=True, text=True, timeout=60)
+        return p, salida.read_text(encoding="utf-8")
+
+    def test_sin_red_ni_credenciales_resuelve_por_el_evento(self):
+        raiz, base = self._repo()
+        self.assertEqual(self._git(raiz, "remote").strip(), "", "el fixture no debe tener remoto")
+        p, salida = self._corre(raiz, EVENTO="pull_request", BASE_REF="main", BASE_SHA=base)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("base=%s" % base, salida)
+
+    def test_base_ausente_y_sin_red_no_mide(self):
+        raiz, _ = self._repo()
+        p, salida = self._corre(raiz, EVENTO="pull_request", BASE_REF="main", BASE_SHA="0" * 40)
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("BASE_NO_MEDIDO", p.stdout + p.stderr)
+        self.assertEqual(salida.strip(), "", "sin base no se publica un rango a medias")
+
+    def test_fetch_del_sha_con_credencial_falla_cerrado_sin_colgar(self):
+        raiz, _ = self._repo()
+        p, _ = self._corre(raiz, EVENTO="pull_request", BASE_REF="main", BASE_SHA="0" * 40, TOKEN="x")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+
+    def test_dispatch_usa_el_ultimo_commit(self):
+        raiz, _ = self._repo()
+        previo = self._git(raiz, "rev-parse", "HEAD~1").strip()
+        p, salida = self._corre(raiz, EVENTO="workflow_dispatch")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("base=%s" % previo, salida)
+
+    def test_pr_atrasado_trae_el_sha_del_base_y_acota(self):
+        raiz, fork, base_avanzado = self._repo_atrasado()
+        with self.assertRaises(subprocess.CalledProcessError):
+            self._git(raiz, "cat-file", "-e", "%s^{commit}" % base_avanzado)
+        p, salida = self._corre(raiz, EVENTO="pull_request", BASE_REF="main",
+                                BASE_SHA=base_avanzado, TOKEN="x")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("base=%s" % fork, salida)
+
+    def _repo_atrasado(self) -> tuple[Path, str, str]:
+        """PR atrasado: el sha del base no esta en el clon y no hay `origin/<base.ref>`."""
+        trabajo = Path(tempfile.mkdtemp(prefix="gatemin-atrasado-"))
+        remoto = trabajo / "remoto.git"
+        self._git(trabajo, "init", "-q", "--bare", str(remoto))
+        semilla = trabajo / "semilla"
+        self._git(trabajo, "clone", "-q", str(remoto), str(semilla))
+        self._git(semilla, "checkout", "-q", "-b", "main")
+        (semilla / "a.txt").write_text("1\n", encoding="utf-8")
+        self._commit(semilla, "c1")
+        fork = self._git(semilla, "rev-parse", "HEAD").strip()
+        self._git(semilla, "checkout", "-q", "-b", "feature")
+        (semilla / "b.txt").write_text("2\n", encoding="utf-8")
+        self._commit(semilla, "c-feature")
+        self._git(semilla, "checkout", "-q", "main")
+        (semilla / "c.txt").write_text("3\n", encoding="utf-8")
+        self._commit(semilla, "c3")
+        avanzado = self._git(semilla, "rev-parse", "HEAD").strip()
+        self._git(semilla, "push", "-q", "origin", "main", "feature")
+        medido = trabajo / "medido"
+        self._git(trabajo, "clone", "-q", "--single-branch", "--branch", "feature",
+                  "file://%s" % remoto, str(medido))
+        return medido, fork, avanzado
 
 
 class ContratoDelCaller(unittest.TestCase):
