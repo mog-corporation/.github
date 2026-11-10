@@ -126,6 +126,8 @@ def audita_workflow(texto: str, reg: dict) -> list[str]:
         errores.append("SIN_ENSURE_GITLEAKS")
     if "merge-base" not in texto or "--log-opts" not in texto:
         errores.append("GITLEAKS_SIN_RANGO")
+    if re.search(r"(?m)^\s*git\s+fetch\b", texto):
+        errores.append("RANGO_CON_FETCH (el checkout ya trae las ramas; un fetch sin credenciales rompe en repo privado)")
     if "--no-git" in texto:
         errores.append("GITLEAKS_ESCANEA_ARBOL (arrastra deuda ajena al PR)")
     if "ref: ${{ inputs.bundle_sha }}" not in texto:
@@ -419,6 +421,10 @@ class ContratoDelWorkflow(unittest.TestCase):
     def test_mutante_bundle_por_rama(self):
         flojo = self.texto.replace("ref: ${{ inputs.bundle_sha }}", "ref: main")
         self.assertIn("BUNDLE_NO_PINNEADO_AL_INPUT", " ".join(audita_workflow(flojo, self.reg)))
+
+    def test_mutante_con_fetch(self):
+        flojo = self.texto.replace('base=""\n          if', 'base=""\n          git fetch --quiet origin main\n          if')
+        self.assertIn("RANGO_CON_FETCH", " ".join(audita_workflow(flojo, self.reg)))
 
     def test_mutante_sin_base_compartida(self):
         flojo = self.texto.replace('--base "$BASE"', "")
