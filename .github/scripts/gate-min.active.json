@@ -7,7 +7,7 @@
     "job": "gate-min",
     "contexto": "gate-min",
     "input_pin": "bundle_sha",
-    "runs_on": "ubuntu-latest",
+    "runs_on": ["self-hosted", "Linux", "X64", "mog-ci"],
     "nota": "El contexto de check es el nombre del job (`gate-min`), fijo. No se renombra: el ruleset de cada repo lo requiere por ese nombre."
   },
   "caller": {

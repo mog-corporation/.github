@@ -3,8 +3,10 @@ name: gate-min (reutilizable)
 # FUENTE UNICA de la puerta minima de un repo de la organizacion.
 #
 # Un solo job, con nombre FIJO (`gate-min`): ese es el contexto de check que el ruleset de cada repo requiere.
-# No se renombra ni se parte en matriz, y corre en `ubuntu-latest` literal (nada de `vars.MOG_RUNS_ON`): el
-# contexto tiene que existir siempre y medir lo mismo, tambien cuando el runner self-hosted esta caido.
+# No se renombra ni se parte en matriz, y corre en un runs-on LITERAL y fijo (nada de `vars.MOG_RUNS_ON`): el
+# contexto tiene que medir siempre lo mismo. Desde el 10/11/2026 ese literal es el runner Linux self-hosted de la
+# org ([self-hosted, Linux, X64, mog-ci], Nivel 0): ubuntu-latest es hosted de pago y sin saldo no arranca. Limite
+# declarado: si la flota Linux esta caida, el job queda en cola (no verde ni rojo) y el ruleset bloquea el PR.
 #
 # Que mide:
 #   1) banco_salud_min.py (H1-H6) sobre lo versionado del repo, fail-closed (0 VERDE / 1 DEFECTOS / 2 NO_MEDIDO);
@@ -28,7 +30,7 @@ on:
 
 jobs:
   gate-min:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, mog-ci]
     timeout-minutes: 10
     steps:
       - name: Exigir pin por SHA40 (fail-closed)
