@@ -99,6 +99,9 @@ def corre(args: list[str]) -> tuple[int, str]:
     return rc, out.getvalue()
 
 
+RUNS_ON_FIJO = ["self-hosted", "Linux", "X64", "mog-ci"]  # runner Linux self-hosted Nivel 0 (10/11/2026)
+
+
 def audita_workflow(texto: str, reg: dict) -> list[str]:
     """Contrato del workflow reutilizable. Devuelve causas; vacio = conforme."""
     try:
@@ -118,8 +121,10 @@ def audita_workflow(texto: str, reg: dict) -> list[str]:
     if list(jobs) != [reg["workflow"]["job"]]:
         errores.append("JOBS_INESPERADOS %s (el contexto de check es un job unico y fijo)" % list(jobs))
     job = jobs.get(reg["workflow"]["job"]) or {}
-    if job.get("runs-on") != "ubuntu-latest":
-        errores.append("RUNS_ON_NO_FIJO %r (tiene que ser literal)" % (job.get("runs-on"),))
+    # Literal y fijo: el valor lo fija ESTE banco (RUNS_ON_FIJO) y el registro tiene que coincidir; una variable,
+    # una expresion o volver a ubuntu-latest (hosted de pago) se rechazan.
+    if job.get("runs-on") != RUNS_ON_FIJO or reg["workflow"].get("runs_on") != RUNS_ON_FIJO:
+        errores.append("RUNS_ON_NO_FIJO %r (tiene que ser el literal %r)" % (job.get("runs-on"), RUNS_ON_FIJO))
     for pieza in ("banco_salud_min.py", "gate-min.active.json"):
         if pieza not in texto:
             errores.append("SIN_%s" % pieza.upper())
@@ -216,10 +221,10 @@ class ContratoDelRegistro(unittest.TestCase):
     def test_los_cinco_repos(self):
         self.assertEqual(sorted(self.reg["repos"]), sorted(REPOS_ESPERADOS))
 
-    def test_contexto_estable_y_ubuntu_literal(self):
+    def test_contexto_estable_y_runs_on_literal(self):
         self.assertEqual(self.reg["workflow"]["job"], "gate-min")
         self.assertEqual(self.reg["workflow"]["contexto"], self.reg["workflow"]["job"])
-        self.assertEqual(self.reg["workflow"]["runs_on"], "ubuntu-latest")
+        self.assertEqual(self.reg["workflow"]["runs_on"], RUNS_ON_FIJO)
 
     def test_gitleaks_por_rango_y_limite_declarado(self):
         g = self.reg["gitleaks"]
@@ -428,8 +433,19 @@ class ContratoDelWorkflow(unittest.TestCase):
         self.assertIn("JOBS_INESPERADOS", " ".join(audita_workflow(flojo, self.reg)))
 
     def test_mutante_runs_on_por_variable(self):
-        flojo = self.texto.replace("runs-on: ubuntu-latest", "runs-on: ${{ vars.MOG_RUNS_ON || 'ubuntu-latest' }}")
+        literal = "runs-on: [self-hosted, Linux, X64, mog-ci]"
+        self.assertIn(literal, self.texto)
+        flojo = self.texto.replace(literal, "runs-on: ${{ fromJSON(vars.MOG_RUNS_ON || '\"ubuntu-latest\"') }}")
         self.assertIn("RUNS_ON_NO_FIJO", " ".join(audita_workflow(flojo, self.reg)))
+
+    def test_mutante_vuelta_a_hosted_de_pago(self):
+        flojo = self.texto.replace("runs-on: [self-hosted, Linux, X64, mog-ci]", "runs-on: ubuntu-latest")
+        self.assertIn("RUNS_ON_NO_FIJO", " ".join(audita_workflow(flojo, self.reg)))
+
+    def test_mutante_registro_aflojado(self):
+        reg = json.loads(json.dumps(self.reg))
+        reg["workflow"]["runs_on"] = "ubuntu-latest"
+        self.assertIn("RUNS_ON_NO_FIJO", " ".join(audita_workflow(self.texto, reg)))
 
     def test_mutante_permisos_en_el_workflow(self):
         flojo = self.texto.replace("\njobs:\n", "\npermissions:\n  contents: read\n\njobs:\n")
