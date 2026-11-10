@@ -1,0 +1,71 @@
+{
+  "schema": "mog.gate-min.v1",
+  "version": 1,
+  "regla": "La puerta minima es UNA: vive en mog-corporation/.github (workflow reutilizable `gate-min.yml` + banco de salud + gitleaks pinneado). Cada repo destino lleva solo un caller fino que fija el SHA del bundle. El registro declara los seis controles EXACTAMENTE: si alguien quita uno, el banco no mide menos, se niega a medir (NO_MEDIDO).",
+  "workflow": {
+    "ruta": ".github/workflows/gate-min.yml",
+    "job": "gate-min",
+    "contexto": "gate-min",
+    "input_pin": "bundle_sha",
+    "runs_on": "ubuntu-latest",
+    "nota": "El contexto de check es el nombre del job (`gate-min`), fijo. No se renombra: el ruleset de cada repo lo requiere por ese nombre."
+  },
+  "caller": {
+    "ruta": ".github/workflows/gate-min.yml",
+    "plantilla": ".github/plantillas/caller-gate-min.yml",
+    "placeholder": "<SHA40_DEL_MERGE>",
+    "disparadores": {
+      "pull_request": {
+        "tipos": [
+          "opened",
+          "synchronize",
+          "reopened"
+        ],
+        "paths": false,
+        "nota": "Sin filtro `paths`: el check requerido tiene que emitirse en TODO PR, no solo en los que tocan ciertas rutas. Un `paths:` dejaria PRs sin el check y el ruleset los bloquearia sin causa visible."
+      },
+      "workflow_dispatch": {
+        "nota": "Evidencia manual en la rama por defecto (main) antes de cablear el ruleset."
+      }
+    },
+    "permisos": {
+      "contents": "read"
+    },
+    "nota_permisos": "Ningun permiso de escritura: la puerta solo lee el arbol y el rango de commits. No comenta, no etiqueta, no escribe issues."
+  },
+  "repos": [
+    "mog-corporation/mog-control-plane",
+    "mog-corporation/mogbot-personal-skills",
+    "mog-corporation/mogautomation-arch",
+    "mog-corporation/mog-containers-m1",
+    "mog-corporation/mog-suite"
+  ],
+  "controles": {
+    "H1": {},
+    "H2": {},
+    "H3": {},
+    "H4": {
+      "bytes_max": 1048576,
+      "nota": "Mide solo ficheros NUEVOS en el rango revisado. Un fichero grande que ya estaba en la base es deuda previa (medida: 18 imagenes en mog-suite) y no debe tumbar un PR que no la toca; si el PR anade uno, se pone en rojo."
+    },
+    "H5": {},
+    "H6": {}
+  },
+  "gitleaks": {
+    "version": "8.30.1",
+    "modo": "rango base..head",
+    "log_opts": "<merge-base(base, head)>..HEAD",
+    "historia_completa": false,
+    "limite_conocido": "Se escanea el rango del PR (commits que entran con el cambio), no la historia completa ni el arbol entero. En `workflow_dispatch` no hay rango de PR: se escanea el ultimo commit (`-1`). Un secreto anterior al rango, o ya presente en la base, no se reporta aqui; para eso hace falta un barrido de historia completo, que se declara fuera de alcance.",
+    "por_que_no_arbol": "El escaneo del arbol entero (`--no-git`) produce falsos positivos `generic-api-key` ya presentes en mog-containers-m1 (8 en 1 fichero de uso y gasto, medidos) y pondria la puerta en rojo por deuda ajena al PR. El rango mide lo que el PR introduce.",
+    "rango_compartido": "El mismo `base` que usa H4 (merge-base en PR; HEAD~1 en dispatch) alimenta el rango de gitleaks: un solo concepto de 'lo que entra con el cambio'."
+  },
+  "h6_deuda_medida": {
+    "nota": "`uses:` sin SHA40 medidos antes de la puerta (job-level y steps). Se pinnean en el MISMO PR del caller: H6 bloquea, no avisa.",
+    "mog-corporation/mog-containers-m1": 15,
+    "mog-corporation/mog-suite": 10,
+    "mog-corporation/mog-control-plane": 3,
+    "mog-corporation/mogbot-personal-skills": 2,
+    "mog-corporation/mogautomation-arch": 0
+  }
+}
