@@ -1,0 +1,25 @@
+name: gate-min
+
+# CALLER FINO: no lleva logica, ni banco, ni escaneo. La puerta es una sola y vive en
+# mog-corporation/.github (workflow reutilizable `gate-min.yml` + banco de salud + gitleaks pinneado).
+# Aqui solo:
+#   1) los disparadores: todo PR (sin `paths`: el check tiene que existir siempre) y dispatch manual,
+#   2) los permisos a nivel de job (contents:read: leer el arbol y el rango; la puerta no escribe nada),
+#   3) el pin por SHA40 al bundle revisado y fusionado.
+#
+# El SHA NO se cambia por una rama ni por un tag, y `bundle_sha` tiene que ser el mismo que el `@` de `uses:`:
+# el banco de .github lo mide. El contexto de check es el nombre del job (`gate-min`); el ruleset lo requiere asi.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  gate-min:
+    permissions:
+      contents: read
+    uses: mog-corporation/.github/.github/workflows/gate-min.yml@<SHA40_DEL_MERGE>
+    with:
+      bundle_sha: <SHA40_DEL_MERGE>

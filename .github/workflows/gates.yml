@@ -27,3 +27,5 @@ jobs:
         run: python3 .github/scripts/test_valida_ticket_issue.py
       - name: Banco de la fan-out (herencia, caller, idempotencia)
         run: python3 .github/scripts/test_fan_out_gobernanza.py
+      - name: Banco de la puerta minima (H1-H6, fail-closed, mutantes)
+        run: python3 .github/scripts/test_gate_min.py

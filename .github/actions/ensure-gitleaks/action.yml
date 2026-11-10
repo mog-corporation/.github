@@ -1,0 +1,58 @@
+name: Asegurar gitleaks en el runner
+description: >
+  Garantiza la CLI gitleaks en el PATH de un runner Linux (GitHub-hosted).
+  No-op si la version pedida ya esta presente. Cuando falta, descarga el binario
+  oficial del release, verifica su sha256 contra un digest confiable versionado
+  en esta accion y lo anade al PATH del job. Sin sudo, sin secretos, sin licencia
+  de organizacion (no usa gitleaks-action).
+
+inputs:
+  version:
+    description: >
+      Version de gitleaks a instalar (sin la v). Debe estar incluida en la tabla
+      de digests confiables de esta accion; si no, la accion falla (fail-closed).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Asegurar gitleaks (no-op si esta; si no, descarga verificada por sha256)
+      shell: bash
+      env:
+        GITLEAKS_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        ver="${GITLEAKS_VERSION:-}"
+        if [ -z "$ver" ]; then echo "::error::version de gitleaks vacia"; exit 1; fi
+
+        if command -v gitleaks >/dev/null 2>&1 && [ "$(gitleaks version 2>/dev/null)" = "$ver" ]; then
+          echo "gitleaks $ver ya presente"
+          exit 0
+        fi
+
+        case "$(uname -m)" in
+          x86_64|amd64) asset_arch=linux_x64 ;;
+          aarch64|arm64) asset_arch=linux_arm64 ;;
+          *) echo "::error::arquitectura no soportada para gitleaks: $(uname -m)"; exit 1 ;;
+        esac
+
+        # El digest esta versionado con el codigo revisado: no procede del mismo canal que el binario.
+        case "${ver}:${asset_arch}" in
+          8.30.1:linux_x64) expected_sha="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb" ;;
+          8.30.1:linux_arm64) expected_sha="e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080" ;;
+          *) echo "::error::version/arquitectura de gitleaks sin digest confiable: ${ver}/${asset_arch}"; exit 1 ;;
+        esac
+
+        tmp=$(mktemp -d)
+        tarball="gitleaks_${ver}_${asset_arch}.tar.gz"
+        base="https://github.com/gitleaks/gitleaks/releases/download/v${ver}"
+        curl -fsSL -o "${tmp}/${tarball}" "${base}/${tarball}"
+
+        ( cd "${tmp}" && printf '%s  %s\n' "${expected_sha}" "${tarball}" | sha256sum -c - )
+
+        tar -xzf "${tmp}/${tarball}" -C "${tmp}"
+        if [ ! -x "${tmp}/gitleaks" ]; then echo "::error::binario gitleaks ausente tras extraer"; exit 1; fi
+
+        echo "${tmp}" >> "$GITHUB_PATH"
+        "${tmp}/gitleaks" version
