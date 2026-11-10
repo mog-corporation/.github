@@ -1,0 +1,134 @@
+name: valida ticket (reutilizable)
+
+# FUENTE UNICA de la puerta de issues de la organizacion.
+#
+# El validador y la taxonomia viven aqui, en mog-corporation/.github, y NO se copian a los repos destino: cada
+# repo lleva solo un caller fino (`gate-issue-form.yml`) que fija el SHA de este bundle. Cambiar la puerta es un
+# PR a este repo; los repos destino no se tocan salvo para subir el pin, y ese cambio se ve en su diff.
+#
+# Fail-closed: un cuerpo que no trae los seis campos del registro se comenta, se etiqueta y el job sale en rojo.
+# NO_MEDIDO (registro ilegible, validador roto) tambien rechaza: lo no medido no autoriza. Solo ACEPTADO retira
+# la etiqueta. El cuerpo entra por variable de entorno y fichero, nunca interpolado en el shell.
+#
+# Alcance: solo el issue que se abre o el que ya lleva la marca de rechazo. No barre el backlog.
+on:
+  workflow_call:
+    inputs:
+      bundle_sha:
+        description: >
+          SHA40 de mog-corporation/.github que el caller fija en `uses:`; se exige para leer el validador y la
+          taxonomia del mismo pin. Una rama o un tag se rechazan: la puerta que corre tiene que ser la revisada.
+        required: true
+        type: string
+
+# Sin bloque `permissions`: los permisos los concede el caller a nivel de job (contents: read, issues: write) y
+# aqui no se elevan. Declararlos vacios dejaria a gh sin token para comentar y etiquetar.
+
+concurrency:
+  group: gate-issue-form-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  puerta:
+    if: github.event.action == 'opened' || contains(github.event.issue.labels.*.name, 'necesita-plantilla')
+    runs-on: ${{ fromJSON(vars.MOG_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    steps:
+      - name: Exigir pin por SHA40 (fail-closed)
+        env:
+          BUNDLE_SHA: ${{ inputs.bundle_sha }}
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          sha = (os.environ.get("BUNDLE_SHA") or "").strip()
+          if not re.fullmatch(r"[0-9a-f]{40}", sha):
+              print("::error::BUNDLE_SHA_NO_ES_SHA40 '%s': el caller debe fijar el SHA del merge del bundle, "
+                    "no una rama ni un tag" % sha, file=sys.stderr)
+              sys.exit(1)
+          print("bundle_sha ok:", sha)
+          PY
+
+      - name: Leer el bundle desde el pin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mog-corporation/.github
+          ref: ${{ inputs.bundle_sha }}
+          path: bundle
+          persist-credentials: false
+
+      - name: El bundle trae validador y taxonomia
+        run: |
+          set -euo pipefail
+          for f in bundle/.github/scripts/valida_ticket_issue.py bundle/.github/scripts/issue-taxonomy.active.json; do
+            test -s "$f" || { echo "::error::BUNDLE_INCOMPLETO falta $f"; exit 1; }
+          done
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+
+      # Comentar y etiquetar exige gh: en runner self-hosted no venia instalado (medido en #618).
+      - name: Asegurar gh en el runner
+        uses: ./bundle/.github/actions/ensure-gh
+        with:
+          version: "2.62.0"
+
+      # El cuerpo entra por variable de entorno y se escribe con python: nada de interpolar markdown en el shell.
+      - name: Guardar el cuerpo del issue
+        env:
+          CUERPO: ${{ github.event.issue.body }}
+        run: |
+          python3 -c "import os,pathlib; pathlib.Path('/tmp/cuerpo.md').write_text(os.environ.get('CUERPO') or '', encoding='utf-8')"
+
+      - name: Validar (fail-closed)
+        id: valida
+        shell: bash
+        run: |
+          set +e
+          python3 bundle/.github/scripts/valida_ticket_issue.py \
+            --cuerpo /tmp/cuerpo.md \
+            --taxonomia bundle/.github/scripts/issue-taxonomy.active.json --json > /tmp/veredicto.json
+          rc=$?
+          cat /tmp/veredicto.json
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          python3 -c 'import json,os; d=json.load(open("/tmp/veredicto.json")); open(os.environ["GITHUB_OUTPUT"],"a").write("etiqueta="+d["etiqueta_rechazo"]+"\n")'
+          exit 0
+
+      - name: Rechazar, comentar y marcar
+        if: steps.valida.outputs.rc != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          N: ${{ github.event.issue.number }}
+          ETIQUETA: ${{ steps.valida.outputs.etiqueta }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys
+          sys.path.insert(0, "bundle/.github/scripts")
+          import valida_ticket_issue as puerta
+          d = json.load(open("/tmp/veredicto.json", encoding="utf-8"))
+          tax = json.load(open("bundle/.github/scripts/issue-taxonomy.active.json", encoding="utf-8"))
+          gate = tax.get("gate") or {}
+          open("/tmp/rechazo.md", "w", encoding="utf-8").write(
+              puerta.cuerpo_rechazo(d.get("causas") or [], d.get("etiqueta_rechazo") or "necesita-plantilla"))
+          open("/tmp/color.txt", "w", encoding="utf-8").write(gate.get("color_rechazo") or "B60205")
+          open("/tmp/desc.txt", "w", encoding="utf-8").write((gate.get("descripcion_rechazo") or "")[:100])
+          PY
+          gh label create "$ETIQUETA" --repo "$REPO" --color "$(cat /tmp/color.txt)" \
+            --description "$(cat /tmp/desc.txt)" --force >/dev/null 2>&1 || true
+          gh issue edit "$N" --repo "$REPO" --add-label "$ETIQUETA"
+          gh issue comment "$N" --repo "$REPO" --body-file /tmp/rechazo.md
+          echo "::error::TICKET_RECHAZADO $(cat /tmp/veredicto.json)"
+          exit 1
+
+      - name: Retirar la marca al quedar completo
+        if: steps.valida.outputs.rc == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          N: ${{ github.event.issue.number }}
+          ETIQUETA: ${{ steps.valida.outputs.etiqueta }}
+        run: |
+          gh issue edit "$N" --repo "$REPO" --remove-label "$ETIQUETA" >/dev/null 2>&1 || true
+          echo "TICKET_ACEPTADO $(cat /tmp/veredicto.json)"

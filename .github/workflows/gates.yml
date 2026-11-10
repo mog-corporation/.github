@@ -1,0 +1,29 @@
+name: gates
+
+# CI del bundle canonico. No corre la puerta de issues (esa se ejecuta en los repos destino via caller): corre
+# su banco. Si el validador, la taxonomia, la plantilla del caller o el workflow reutilizable se aflojan, este
+# workflow se pone en ROJO antes del merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  banco:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+      - name: Dependencias del banco
+        run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
+      - name: Banco de la puerta de tickets (positivo, negativo, mutante)
+        run: python3 .github/scripts/test_valida_ticket_issue.py
+      - name: Banco de la fan-out (herencia, caller, idempotencia)
+        run: python3 .github/scripts/test_fan_out_gobernanza.py

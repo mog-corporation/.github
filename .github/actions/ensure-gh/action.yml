@@ -1,0 +1,61 @@
+name: Asegurar gh en el runner
+description: >
+  Garantiza la CLI gh en el PATH de un runner Linux (self-hosted MoG o GitHub-hosted).
+  No-op si gh ya está. Cuando falta, descarga el binario oficial, verifica su
+  sha256 contra un digest confiable versionado en esta acción y lo añade al PATH del job.
+  Sin sudo, sin paquete del sistema, sin secretos.
+
+inputs:
+  version:
+    description: >
+      Versión de gh a instalar (sin la v). Debe estar incluida en la tabla de
+      digests confiables de esta acción.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Asegurar gh (no-op si ya está; si no, descarga verificada por sha256)
+      shell: bash
+      env:
+        GH_CLI_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        if command -v gh >/dev/null 2>&1; then
+          echo "gh ya presente: $(gh --version | head -1)"
+          exit 0
+        fi
+
+        os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        case "$(uname -m)" in
+          x86_64|amd64) arch=amd64 ;;
+          aarch64|arm64) arch=arm64 ;;
+          *) echo "::error::arquitectura no soportada para gh: $(uname -m)"; exit 1 ;;
+        esac
+        if [ "$os" != "linux" ]; then
+          echo "::error::SO no soportado por esta acción Linux-only: $os"; exit 1
+        fi
+
+        ver="${GH_CLI_VERSION:-}"
+        case "${ver}:${arch}" in
+          2.62.0:amd64) expected_sha="41c8b0698ad3003cb5c44bde672a1ffd5f818595abd80162fbf8cc999418446a" ;;
+          2.62.0:arm64) expected_sha="a165413209aab98bfb1db9629b97bc9c59778d38bb7378a33a0363cf822e7965" ;;
+          *) echo "::error::versión/arquitectura de gh sin digest confiable: ${ver:-vacia}/${arch}"; exit 1 ;;
+        esac
+        echo "Instalando gh ${ver} para ${os}_${arch}"
+
+        tmp=$(mktemp -d)
+        base="https://github.com/cli/cli/releases/download/v${ver}"
+        tarball="gh_${ver}_${os}_${arch}.tar.gz"
+        curl -fsSL -o "${tmp}/${tarball}" "${base}/${tarball}"
+
+        # El digest está versionado con el código revisado: no procede del mismo canal que el binario.
+        ( cd "${tmp}" && printf '%s  %s\n' "${expected_sha}" "${tarball}" | sha256sum -c - )
+
+        tar -xzf "${tmp}/${tarball}" -C "${tmp}"
+        dest="${tmp}/gh_${ver}_${os}_${arch}/bin"
+        if [ ! -x "${dest}/gh" ]; then echo "::error::binario gh ausente tras extraer"; exit 1; fi
+
+        echo "${dest}" >> "$GITHUB_PATH"
+        "${dest}/gh" --version
