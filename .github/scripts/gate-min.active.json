@@ -7,7 +7,12 @@
     "job": "gate-min",
     "contexto": "gate-min",
     "input_pin": "bundle_sha",
-    "runs_on": ["self-hosted", "Linux", "X64", "mog-ci"],
+    "runs_on": [
+      "self-hosted",
+      "Linux",
+      "X64",
+      "mog-ci"
+    ],
     "nota": "El contexto de check es el nombre del job (`gate-min`), fijo. No se renombra: el ruleset de cada repo lo requiere por ese nombre."
   },
   "caller": {
@@ -49,7 +54,10 @@
       "nota": "Mide solo ficheros NUEVOS en el rango revisado. Un fichero grande que ya estaba en la base es deuda previa (medida: 18 imagenes en mog-suite) y no debe tumbar un PR que no la toca; si el PR anade uno, se pone en rojo."
     },
     "H5": {},
-    "H6": {}
+    "H6": {},
+    "H7": {
+      "nota": "Mide `runs-on` LITERAL. Un pool self-hosted sin etiqueta de SO (`[self-hosted]`) puede caer en Windows y morir en `bash: command not found` (medido: job 130520148624). Las expresiones (`fromJSON(vars.MOG_RUNS_ON)`) quedan fuera de alcance declarado: no se resuelven en el banco."
+    }
   },
   "gitleaks": {
     "version": "8.30.1",
