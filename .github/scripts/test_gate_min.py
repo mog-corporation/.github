@@ -244,7 +244,7 @@ class ContratoDelRegistro(unittest.TestCase):
 
     def test_control_desconocido_no_mide(self):
         roto = json.loads(REGISTRO.read_text(encoding="utf-8"))
-        roto["controles"]["H7"] = {}
+        roto["controles"]["H99"] = {}
         tmp = Path(tempfile.mkdtemp(prefix="gatemin-reg-")) / "r.json"
         tmp.write_text(json.dumps(roto), encoding="utf-8")
         with self.assertRaisesRegex(banco.NoMedido, "CONTROLES_NO_COINCIDEN"):
@@ -365,6 +365,30 @@ class ControlesQueMuerden(unittest.TestCase):
             )
         }), "H6")
         self.assertTrue(any("@v1" in x for x in h), h)
+
+    def test_h7_runner_self_hosted_sin_so(self):
+        h = self.assertSoloRojo(dict(SANO, **{
+            ".github/workflows/vigila.yml": (
+                "on:\n  push:\n    branches: [main]\n"
+                "jobs:\n  v:\n    runs-on: [self-hosted]\n    steps:\n"
+                "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"
+            )
+        }), "H7")
+        self.assertTrue(any("self-hosted" in x and "sin etiqueta de SO" in x for x in h), h)
+
+    def test_h7_acepta_so_y_declara_la_expresion_fuera_de_alcance(self):
+        r = evalua(repo(dict(SANO, **{
+            ".github/workflows/linux.yml": (
+                "on: push\njobs:\n  a:\n    runs-on: [self-hosted, Linux, X64, mog-ci]\n    steps:\n"
+                "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"
+            ),
+            ".github/workflows/por_variable.yml": (
+                "on: push\njobs:\n  b:\n    runs-on: ${{ fromJSON(vars.MOG_RUNS_ON) }}\n    steps:\n"
+                "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"
+            ),
+        })))
+        self.assertEqual(r["veredicto"], "VERDE", r)
+        self.assertEqual(r["controles"]["H7"]["hallazgos"], [], r)
 
     def test_h6_acepta_local_y_sha40(self):
         r = evalua(repo(dict(SANO, **{

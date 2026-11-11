@@ -58,6 +58,7 @@ CONTROLES = {
     "H4": "sin ficheros nuevos de mas de 1 MiB",
     "H5": "sin claves privadas ni tokens en claro",
     "H6": "acciones de terceros pinneadas por SHA40 (workflows)",
+    "H7": "runners self-hosted con su sistema operativo declarado",
 }
 
 
@@ -220,8 +221,47 @@ def h6_pins(raiz: Path, ficheros: list[Path], regla: dict) -> list[str]:
     return fuera
 
 
+SO_SELF_HOSTED = {"linux", "windows", "macos"}
+
+
+def h7_runner_so(raiz: Path, ficheros: list[Path], regla: dict) -> list[str]:
+    """Un `runs-on` self-hosted tiene que declarar el sistema operativo.
+
+    `runs-on: [self-hosted]` casa con cualquier runner del pool: el job puede caer en un
+    runner Windows y morir en el primer `bash` (medido: job 130520148624,
+    `bash: command not found`; los runs 43019888854 y 43003765825 quedaron rojos por eso).
+    Se mide solo lo escrito LITERAL: una expresion (`${{ fromJSON(vars.MOG_RUNS_ON) }}`) no se
+    puede resolver aqui, asi que se declara fuera de alcance; no se presume verde ni rojo.
+    """
+    fuera = []
+    for f in _workflows(ficheros):
+        try:
+            d = _yaml(raiz, f)
+        except (OSError, yaml.YAMLError):
+            continue  # H3 ya lo reporta
+        if not isinstance(d, dict):
+            continue
+        for jid, job in (d.get("jobs") or {}).items():
+            if not isinstance(job, dict):
+                continue
+            ro = job.get("runs-on")
+            if isinstance(ro, str):
+                etiquetas = [ro]
+            elif isinstance(ro, list) and all(isinstance(x, str) for x in ro):
+                etiquetas = ro
+            else:
+                continue
+            if any("${{" in e for e in etiquetas):
+                continue
+            bajas = {e.strip().lower() for e in etiquetas}
+            if "self-hosted" not in bajas or (bajas & SO_SELF_HOSTED):
+                continue
+            fuera.append("%s: job %s -> runs-on %s sin etiqueta de SO" % (f, jid, etiquetas))
+    return fuera
+
+
 MEDIDORES = {"H1": h1_bytecode, "H2": h2_sensibles, "H3": h3_workflows,
-             "H4": h4_peso, "H5": h5_claves, "H6": h6_pins}
+             "H4": h4_peso, "H5": h5_claves, "H6": h6_pins, "H7": h7_runner_so}
 
 
 def evalua(raiz: Path, registro: dict, excluir: tuple[str, ...] = ("bundle", ".git"),
