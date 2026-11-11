@@ -57,7 +57,9 @@
     "log_opts": "<merge-base(base, head)>..HEAD",
     "historia_completa": false,
     "limite_conocido": "Se escanea el rango del PR (commits que entran con el cambio), no la historia completa ni el arbol entero. En `workflow_dispatch` no hay rango de PR: se escanea el ultimo commit (`-1`). Un secreto anterior al rango, o ya presente en la base, no se reporta aqui; para eso hace falta un barrido de historia completo, que se declara fuera de alcance.",
-    "por_que_no_arbol": "El escaneo del arbol entero (`--no-git`) produce falsos positivos `generic-api-key` ya presentes en mog-containers-m1 (8 en 1 fichero de uso y gasto, medidos) y pondria la puerta en rojo por deuda ajena al PR. El rango mide lo que el PR introduce.",
+    "por_que_no_arbol": "El escaneo del arbol entero (`--no-git`) arrastra falsos positivos `generic-api-key` ya en la base de mog-containers-m1 (medidos en historia completa: 23 en 8 ficheros = 21 `authenticated_identity` con el id publico de proyecto GCP `sincere-tape-499604-f2` en 7 copias del mismo tool de uso y gasto, 1 `sede_key` de configuracion y 1 `ghp_` de juguete del banco de mesa). El rango mide lo que el PR introduce.",
+    "config": ".github/gitleaks.toml",
+    "config_alcance": "Extiende las reglas por defecto y declara una lista CERRADA de tres literales medidos (regexTarget `match` para los dos identificadores por linea, `secret` para el token de juguete). No redefine reglas ni acota ficheros: cualquier otra coincidencia sigue en rojo. Se aplica en las DOS ramas del paso (rango y `-1`), asi que el mismo texto exacto tambien se tolera dentro del rango; una variacion (otro id, otra linea, otro valor) no.",
     "rango_compartido": "El mismo `base` que usa H4 (merge-base en PR; HEAD~1 en dispatch) alimenta el rango de gitleaks: un solo concepto de 'lo que entra con el cambio'."
   },
   "h6_deuda_medida": {

@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -32,6 +33,7 @@ AQUI = Path(__file__).resolve().parent
 RAIZ = AQUI.parents[1]
 REGISTRO = AQUI / "gate-min.active.json"
 WORKFLOW = RAIZ / ".github" / "workflows" / "gate-min.yml"
+CONFIG_GITLEAKS = RAIZ / ".github" / "gitleaks.toml"
 PLANTILLA = RAIZ / ".github" / "plantillas" / "caller-gate-min.yml"
 ACCION = RAIZ / ".github" / "actions" / "ensure-gitleaks" / "action.yml"
 
@@ -150,6 +152,12 @@ def audita_workflow(texto: str, reg: dict) -> list[str]:
         errores.append("RANGO_CON_FETCH_CIEGO (solo se admite el fetch del sha exacto, autenticado)")
     if "--no-git" in texto:
         errores.append("GITLEAKS_ESCANEA_ARBOL (arrastra deuda ajena al PR)")
+    # La lista cerrada de identificadores que NO son secreto viaja en el bundle y se aplica en las dos
+    # ramas (rango y ultimo commit). Si falta, vuelven los falsos positivos medidos.
+    if texto.count('--config="$CONFIG"') != 2 or "CONFIG=bundle/.github/gitleaks.toml" not in texto:
+        errores.append("GITLEAKS_SIN_CONFIG (las dos invocaciones fijan la config del pin)")
+    if ".github/gitleaks.toml" not in texto:
+        errores.append("BUNDLE_SIN_CONFIG_DE_GITLEAKS")
     if "ref: ${{ inputs.bundle_sha }}" not in texto:
         errores.append("BUNDLE_NO_PINNEADO_AL_INPUT")
     if '--base "$BASE"' not in texto or "BASE: ${{ steps.rango.outputs.base }}" not in texto:
@@ -459,6 +467,15 @@ class ContratoDelWorkflow(unittest.TestCase):
         flojo = self.texto.replace("merge-base", "rev-parse")
         self.assertIn("GITLEAKS_SIN_RANGO", " ".join(audita_workflow(flojo, self.reg)))
 
+    def test_mutante_sin_config_de_gitleaks(self):
+        flojo = self.texto.replace('--config="$CONFIG" ', "")
+        self.assertIn("GITLEAKS_SIN_CONFIG", " ".join(audita_workflow(flojo, self.reg)))
+
+    def test_mutante_config_en_una_sola_rama(self):
+        flojo = self.texto.replace('--config="$CONFIG" --log-opts="${BASE}..HEAD"',
+                                   '--log-opts="${BASE}..HEAD"')
+        self.assertIn("GITLEAKS_SIN_CONFIG", " ".join(audita_workflow(flojo, self.reg)))
+
     def test_mutante_bundle_por_rama(self):
         flojo = self.texto.replace("ref: ${{ inputs.bundle_sha }}", "ref: main")
         self.assertIn("BUNDLE_NO_PINNEADO_AL_INPUT", " ".join(audita_workflow(flojo, self.reg)))
@@ -631,6 +648,37 @@ class ContratoDelCaller(unittest.TestCase):
 
     def test_un_caller_ilegible_no_autoriza(self):
         self.assertTrue(audita_caller("name: [sin cerrar", self.reg)[0].startswith("CALLER_ILEGIBLE"))
+
+
+class ConfigDeGitleaks(unittest.TestCase):
+    """La config del pin: extiende las reglas por defecto y acota SOLO literales medidos, por linea."""
+
+    def setUp(self):
+        self.cfg = tomllib.loads(CONFIG_GITLEAKS.read_text(encoding="utf-8"))
+
+    def test_extiende_las_reglas_por_defecto(self):
+        self.assertIs(self.cfg.get("extend", {}).get("useDefault"), True)
+
+    def test_no_redefine_ni_silencia_reglas(self):
+        self.assertNotIn("rules", self.cfg, "acotar una regla entera esconde secretos reales de esa regla")
+
+    def test_allowlists_cerradas_y_por_linea(self):
+        listas = self.cfg.get("allowlists") or []
+        self.assertEqual(len(listas), 2, listas)
+        por_linea = [a for a in listas if a.get("regexTarget") == "match"]
+        por_secreto = [a for a in listas if a.get("regexTarget") == "secret"]
+        self.assertEqual((len(por_linea), len(por_secreto)), (1, 1), listas)
+        self.assertNotIn("paths", listas[0], "no se acotan ficheros enteros")
+
+    def test_solo_los_tres_literales_medidos(self):
+        regexes = [r for a in self.cfg["allowlists"] for r in a["regexes"]]
+        self.assertEqual(len(regexes), 3, regexes)
+        esperados = [
+            'authenticated_identity": "sincere-tape-499604-f2"',
+            'sede_key": "estacion_00_operaciones"',
+            "^ghp_12345678901234567890$",
+        ]
+        self.assertEqual(sorted(regexes), sorted(esperados))
 
 
 class AccionDeGitleaks(unittest.TestCase):

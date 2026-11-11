@@ -67,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           for f in .github/scripts/banco_salud_min.py .github/scripts/gate-min.active.json \
-                   .github/actions/ensure-gitleaks/action.yml; do
+                   .github/actions/ensure-gitleaks/action.yml .github/gitleaks.toml; do
             test -s "bundle/$f" || { echo "::error::BUNDLE_INCOMPLETO falta bundle/$f"; exit 1; }
           done
 
@@ -143,15 +143,18 @@ jobs:
             --base "$BASE"
 
       # Rango, no historia completa ni arbol entero (el arbol arrastra falsos positivos ya en la base).
+      # `--config` trae la lista CERRADA de identificadores medidos que `generic-api-key` confunde con
+      # secreto (proyecto GCP, clave de sede, token de juguete del banco). No silencia reglas ni ficheros.
       - name: gitleaks sobre el rango revisado
         env:
           BASE: ${{ steps.rango.outputs.base }}
         run: |
           set -euo pipefail
+          CONFIG=bundle/.github/gitleaks.toml
           if [ -n "$BASE" ]; then
             echo "gitleaks: rango ${BASE:0:12}..HEAD"
-            gitleaks detect --no-banner --redact --exit-code 1 --log-opts="${BASE}..HEAD"
+            gitleaks detect --no-banner --redact --exit-code 1 --config="$CONFIG" --log-opts="${BASE}..HEAD"
           else
             echo "gitleaks: sin base (primer commit): se escanea el ultimo commit (-1)"
-            gitleaks detect --no-banner --redact --exit-code 1 --log-opts="-1"
+            gitleaks detect --no-banner --redact --exit-code 1 --config="$CONFIG" --log-opts="-1"
           fi

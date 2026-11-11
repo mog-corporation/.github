@@ -1,0 +1,23 @@
+title = "MoG gate-min"
+
+# Config del gate (gitleaks 8.30.1). Extiende las reglas por defecto y acota SOLO las
+# coincidencias medidas que no son credenciales. La lista es cerrada, con el literal
+# completo: no se silencia ninguna regla ni ningun fichero, y cualquier otra coincidencia
+# sigue poniendo el job en rojo.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Identificadores publicos, no secretos (medidos en historia de mog-containers-m1)"
+regexTarget = "match"
+regexes = [
+  # Proyecto GCP del bolsillo gcp_vertex_ai (id publico, aparece en URLs y consolas).
+  '''authenticated_identity": "sincere-tape-499604-f2"''',
+  # Nombre de sede del mapa de alias (clave interna de configuracion, sin privilegio).
+  '''sede_key": "estacion_00_operaciones"''',
+]
+
+[[allowlists]]
+description = "Token de juguete del banco de mesa (secuencia 0-9; no es un PAT real)"
+regexTarget = "secret"
+regexes = ['''^ghp_12345678901234567890$''']
