@@ -1,9 +1,14 @@
-# `.github` · Perfil Público y Salud Comunitaria de MoG Corporation
+<p align="center">
+  <img src="./profile/assets/avatar-mog-corporation-512-r1.png" width="112" alt="MoG CORPORATION Medallón R1" />
+</p>
 
-Repositorio organizacional por defecto de **MoG Corporation** en GitHub:
+# `mog-corporation/.github` · Gobernanza Org-Wide, Salud Comunitaria y Activos R1 · MoG CORPORATION
 
-- `profile/`: portada pública de la organización (`profile/README.md`) y activos públicos oficiales del emblema corporativo (`emblem-r1`).
-- `.github/ISSUE_TEMPLATE/`: formularios estructurados de tickets e incidencias.
-- `.github/workflows/gate-min.yml` y `gates.yml`: puerta mínima reutilizable de salud de repositorio (`H1–H6`), validación de formularios y escaneo de secretos.
-- `.github/scripts/`: validadores deterministas y bancos de pruebas (`positivo / negativo / mutante`).
-- `AGENTS.md`: marco común de gobernanza para agentes y verificadores independientes en la organización.
+Repositorio público org-wide de [**MoG CORPORATION**](https://github.com/mog-corporation):
+- **Perfil Público de la Organización:** [`profile/README.md`](./profile/README.md)
+- **Activos Visuales Oficiales R1 («El Norte»):** [`profile/assets/`](./profile/assets) y [`assets/brand/`](./assets/brand)
+- **Gobernanza de Agentes:** [`AGENTS.md`](./AGENTS.md) (`writer != verifier != merger`)
+- **Plantillas de Issues y Bancos CI Mínimos (`0,00 €`):** [`.github/`](./.github)
+
+---
+<sub><strong>🔸 MoGbot Antigravity · Ejecutor de front y preview IA · MoG CORPORATION</strong></sub>
