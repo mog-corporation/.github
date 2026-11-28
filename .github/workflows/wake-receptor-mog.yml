@@ -1,0 +1,96 @@
+name: WAKE receptor (mog-pr-wake)
+
+# Ultima milla del wake por evento DENTRO del repo: `pr-wake-por-evento-mog.yml` emite el
+# `repository_dispatch` `mog-pr-wake`; este workflow es su consumidor. Solo si el actor de
+# ESTE runner es el destino declarado en el PR (`Independent verifier:`), ejecuta el tick del
+# vehiculo (preflight Nivel 0: sin delta no se lanza LLM) y deja el recibo medido en el
+# resumen del run. No abre sesiones, no firma, no aprueba, no fusiona y no usa secretos.
+#
+# CONTROL / KILL-SWITCH: solo actua si la variable de repo MOG_WAKE_RECEIVER_ENABLED == 'true'.
+#   Apagado por defecto (variable ausente => no-op). Se enciende/apaga sin tocar codigo:
+#     gh variable set MOG_WAKE_RECEIVER_ENABLED --body true --repo OWNER/REPO
+# DATOS (variables de repo, ninguna horneada):
+#   MOG_TRUSTED_WAKE_AUTHORS  roster de destinos confiables (mismo que el emisor). Puede traer el
+#                             login de la app (`qoderai[bot]`/`qoderai`): el receptor lo resuelve
+#                             al actor canonico con la misma funcion que el emisor (P2 4574347639).
+#   MOG_WAKE_ACTOR            slug del actor que aloja este runner; si no es el destino, SKIP.
+#   MOG_VEHICLE_ROOT          raiz del contenedor; sin ella el recibo es NO_MEDIDO.
+#   MOG_WAKE_RUNS_ON          JSON del pool (por defecto ["self-hosted","Linux"]): debe ser el que
+#                             aloja el vehiculo; el pool Linux del CI sigue en #625.
+#   MOG_WAKE_STATE_FILE       fichero de claves ya despertadas (dedupe opcional).
+# ESTADOS: DESPERTADO / SKIP -> verde con recibo; REJECTED, VEHICULO_ROTO y *_SIN_CONTRATO ->
+#   rojo; NO_MEDIDO -> aviso visible (un dato ausente nunca se reporta como verde).
+
+on:
+  repository_dispatch:
+    types: [mog-pr-wake]
+
+permissions:
+  contents: read
+
+concurrency:
+  # El contrato viaja anidado bajo `wake` (tope de 10 propiedades raiz de GitHub).
+  group: mog-wake-receptor-${{ github.event.client_payload.wake.idempotency_key || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  receptor:
+    name: receptor-wake-vehiculo
+    # KILL-SWITCH: apagado por defecto. Sin la variable en 'true' el job no corre.
+    if: ${{ vars.MOG_WAKE_RECEIVER_ENABLED == 'true' }}
+    runs-on: ${{ fromJSON(vars.MOG_WAKE_RUNS_ON || '["self-hosted","Linux"]') }}
+    timeout-minutes: 10
+    env:
+      MOG_TRUSTED_WAKE_AUTHORS: ${{ vars.MOG_TRUSTED_WAKE_AUTHORS }}
+      MOG_WAKE_ACTOR: ${{ vars.MOG_WAKE_ACTOR }}
+      MOG_VEHICLE_ROOT: ${{ vars.MOG_VEHICLE_ROOT }}
+      MOG_WAKE_STATE_FILE: ${{ vars.MOG_WAKE_STATE_FILE }}
+    steps:
+      - name: Checkout de main (codigo de confianza)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      # El runner self-hosted puede no traer `python` (solo `python3`): resolver en un solo
+      # sitio y fallar aqui, explicito, en vez de con exit 127 dentro de la medicion.
+      - name: Resolver interprete python
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then py=python3
+          elif command -v python >/dev/null 2>&1; then py=python
+          else
+            echo "::error::sin interprete python en el runner (ni python3 ni python)"; exit 1
+          fi
+          echo "PY=$py" >> "$GITHUB_ENV"
+
+      - name: Validar el dispatch y despertar al vehiculo
+        id: receptor
+        shell: bash
+        run: |
+          set +e
+          "${PY:?PY no resuelto}" -B governance/control-plane/receptor_wake_gobernado.py \
+            --event "$GITHUB_EVENT_PATH" \
+            --repo "$GITHUB_REPOSITORY" \
+            --trusted-csv "${MOG_TRUSTED_WAKE_AUTHORS:-}" \
+            --actor-slug "${MOG_WAKE_ACTOR:-}" \
+            --vehicle-root "${MOG_VEHICLE_ROOT:-}" \
+            --state-file "${MOG_WAKE_STATE_FILE:-}" \
+            --receipt-out wake-receipt.json > wake-receipt-linea.json
+          rc=$?
+          set -e
+          cat wake-receipt-linea.json
+          {
+            echo '### Recibo del wake (`mog.wake.receipt.v1`)'
+            echo '```json'
+            cat wake-receipt.json 2>/dev/null || cat wake-receipt-linea.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          case "$rc" in
+            0) echo "::notice::wake: DESPERTADO o SKIP (rc 0, sin verde inventado)" ;;
+            1) echo "::error::wake: REJECTED o vehiculo roto (rc 1)"; exit 1 ;;
+            *) echo "::warning::wake: NO_MEDIDO (rc $rc): dato ausente, visible y no verde" ;;
+          esac

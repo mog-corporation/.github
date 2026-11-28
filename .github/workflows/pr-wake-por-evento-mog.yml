@@ -1,0 +1,137 @@
+name: PR WAKE por evento (MoG)
+
+# Enganche del wake por evento del SPEC_MOG_BUS_WAKES para la operativa PR/CI.
+# Via mas efectiva, sin sobre-ingenieria: el RECEPTOR es GitHub Actions nativo (ya autenticado,
+# sin endpoint externo ni HMAC); el WAKE es un repository_dispatch (mog-pr-wake) al actuador
+# canonico, el mismo que ya consume el wake de debates. Corre SIEMPRE codigo de main.
+# CONTRATO: el `client_payload` anida el wake bajo la clave `wake` (mismo sobre que el wake de
+# debates). GitHub rechaza con HTTP 422 cualquier `client_payload` de mas de 10 propiedades raiz,
+# y el contrato ya ocupaba 11: anidar deja la raiz en 1 y permite crecer sin volver a romper.
+#
+# CONTROL / KILL-SWITCH: solo actua si la variable de repo MOG_PR_WAKE_ENABLED == 'true'.
+#   Apagado por defecto (variable ausente => no-op). Encender/apagar al instante girando la var,
+#   sin tocar codigo:  gh variable set MOG_PR_WAKE_ENABLED --body true|false --repo OWNER/REPO
+# SEGURIDAD (P2 review 4574166934): checkout de main y el cuerpo del PR NO se cree solo. El
+#   emisor exige Writer == autor del PR, verificador ASIGNADO en GitHub (assignees o
+#   requested_reviewers) y en MOG_TRUSTED_WAKE_AUTHORS, actor autenticado con vinculo (autor,
+#   verificador o roster) y JOB unico coherente con el marcador `mog-review-rounds:v1` del HEAD
+#   exacto. Campo forjado => REJECTED; dato ausente => NO_MEDIDO. Fail-closed.
+# ALIAS (P2 review 4574275521): la cuenta GitHub `qoderai[bot]`/app `qoderai` no es el actor
+#   canonico. Todo login se resuelve a `ingenieria-qoder` (registro versionado
+#   `execution-surfaces.active.json`) ANTES de comparar asignacion, roster y marcador; el
+#   dispatch conserva el actor canonico. Sin registro legible => NO_MEDIDO.
+# REACTIVACION (P2 review 4574275527 y 4574373867): un `edited` que corrige el marcador del HEAD
+#   exacto vuelve a despertar; solo en la transicion stale->exact. Un segundo edit que conserva el
+#   marcador exacto cierra SKIP sin dispatch (el dedupe se mide en el evento, no en el runner).
+# SEDE PR+HEAD (P2 review 4574479159): alternar exact->stale->exact reemitia en cada restauracion
+#   porque la guarda solo miraba el cuerpo anterior. Antes del dispatch se CONSUME de forma atomica
+#   la clave PR+HEAD en `refs/tags/mog-wake-ledger/pr-<n>-<head12>` (`POST /git/refs`: 201 gana,
+#   422 ya existe => SKIP/CLAVE_YA_CONSUMIDA). Es un CAS del servidor: sobrevive a reinicios y a
+#   runs simultaneos y NO depende del state-file opcional del receptor. El tag apunta a
+#   `github.sha` (commit ya presente de la rama base), no mueve historia ni aporta cambios de
+#   contenido; los `on: push` del repo filtran por `branches: main` o por paths. Crece a lo sumo
+#   un tag por HEAD y no se borra (borrarlo devolveria la clave). Un 4xx de
+#   entrega libera la clave (reintentable); un 5xx/red la conserva (fail-closed). La concurrencia
+#   se agrupa por PR+HEAD para que dos eventos del mismo HEAD no compitan por el mismo ref.
+# TELEMETRIA: cada pase imprime su JSON mog.pr-wake.telemetry.v1 (estado, autor, actor
+#   autenticado, actor destino, delivery_id, sede_ref). La clave de idempotencia es estable por
+#   PR+HEAD (no por run_id): un synchronize repetido cierra SKIP en la sede.
+
+on:
+  pull_request_target:
+    # `synchronize` = HEAD nuevo en un PR ya abierto: sin el, el hook se queda ciego justo
+    # cuando llega el commit que hay que medir (la vigia si escucha ese evento).
+    # `edited` = correccion del cuerpo/marcador tras ese pusheo: sin el, un HEAD cuyo marcador
+    # llego divergente (push previo al marcador) no vuelve a despertar nunca.
+    types: [ready_for_review, labeled, review_requested, synchronize, edited]
+  workflow_run:
+    workflows: ["MoG corpus gates", "auto-merge-mog-gates"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  # La sede consume `POST /git/refs` y la entrega `POST /dispatches`: ambos exigen
+  # "Contents: write". Con "read" el ref no se crea (fail-closed) y el wake no llega nunca.
+  contents: write
+
+concurrency:
+  # Un solo pase por PR+HEAD: la sede es el arbitro atomico, pero agrupar evita carreras
+  # inutiles del mismo ref. Sin cancelar: un pase en curso nunca se corta a medias.
+  # En `workflow_run` la clave es el PR y su HEAD (no el id del run, que es unico y no agrupaba).
+  # El tipo de evento entra en la clave: GitHub sustituye el pendiente de un grupo aunque no
+  # cancele el activo, y un `workflow_run` (PR resumido, sin cuerpo) no puede reemplazar a un
+  # `edited` pendiente que trae el contrato.
+  group: mog-pr-wake-${{ github.repository }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || 'global' }}-${{ github.event.pull_request.head.sha || github.event.workflow_run.pull_requests[0].head.sha || github.event.workflow_run.head_sha || 'sin-head' }}
+  cancel-in-progress: false
+
+jobs:
+  wake:
+    name: wake-por-evento
+    # KILL-SWITCH: apagado por defecto. Sin la variable en 'true' el job no corre.
+    # `edited` solo despierta si cambio el CUERPO: reetiquetar o renombrar no gasta runner.
+    # Un `workflow_run` sin PR (p. ej. el de main de auto-merge-mog-gates) cerraria NO_PR_IN_EVENT:
+    # se omite aqui, sin ocupar runner.
+    if: ${{ vars.MOG_PR_WAKE_ENABLED == 'true' && (github.event.action != 'edited' || github.event.changes.body != null) && (github.event_name != 'workflow_run' || github.event.workflow_run.pull_requests[0] != null) }}
+    # Job privilegiado: alojado fijo, sin compartir host persistente con codigo de PR.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      MOG_TRUSTED_WAKE_AUTHORS: ${{ vars.MOG_TRUSTED_WAKE_AUTHORS }}
+      # Sede y entrega productivas: ref Git atomico y POST /dispatches reales.
+      MOG_WAKE_SEDE: ref
+      MOG_WAKE_ENTREGA: api
+      MOG_WAKE_SEDE_SHA: ${{ github.sha }}
+      GITHUB_API_URL: ${{ github.api_url }}
+    steps:
+      - name: Checkout de main (codigo de confianza)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+
+      - name: Consumir sede PR+HEAD y emitir el wake (atomico, fail-closed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+          python governance/control-plane/pr_wake_governance.py \
+            --event "$GITHUB_EVENT_PATH" --repo "${{ github.repository }}" > wake-telemetry.json
+          rc=$?
+          set -e
+          cat wake-telemetry.json
+          # La telemetria es el contrato del pase: sin linea JSON valida no hay medida. Cada
+          # rc tiene su UNICA familia de estados esperada (0 DISPATCH_OK, 1 SKIP/REJECTED de
+          # gobierno, 2 NO_MEDIDO por dato ausente); toda otra pareja rc/estado es ROJA. Una
+          # causa de INFRAESTRUCTURA (SEDE_/ENTREGA_, incluido un resultado INDETERMINADO por
+          # cuerpo truncado) es roja en cualquier rc, y un rc ausente/inesperado NUNCA queda
+          # verde. Los cierres de gobierno (SKIP/REJECTED/NO_MEDIDO) son verdes y visibles.
+          python - "$rc" <<'PY'
+          import json, sys
+          rc = int(sys.argv[1])
+          lineas = [l for l in open("wake-telemetry.json", encoding="utf-8") if l.strip()]
+          datos = {}
+          if lineas:
+              try:
+                  datos = json.loads(lineas[-1])
+              except ValueError:
+                  datos = {}
+          estado = datos.get("state") or ""
+          causa = str(datos.get("cause") or "")
+          # Familia unica por rc: un SKIP/REJECTED de gobierno (p. ej. EDITED_SIN_TRANSICION,
+          # CLAVE_YA_CONSUMIDA, WRITER_NO_ES_AUTOR) cierra el pase sin dispatch y no es fallo.
+          esperados = {0: {"DISPATCH_OK"}, 1: {"SKIP", "REJECTED"}, 2: {"NO_MEDIDO"}}
+          ok = estado in esperados.get(rc, set()) \
+              and not causa.startswith(("SEDE_", "ENTREGA_"))
+          if rc in (1, 2):
+              ok = ok and bool(causa)
+          if not ok:
+              print("::error title=mog.pr-wake::rc=%d estado=%s causa=%s"
+                    % (rc, estado or "sin-telemetria", causa or "sin-telemetria"))
+              sys.exit(1)
+          PY
