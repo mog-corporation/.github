@@ -4,9 +4,9 @@
 
 Mide tres cosas:
 
-  REGISTRO   `gate-min.active.json` declara EXACTAMENTE los seis controles: si se quita uno, el banco no mide
+  REGISTRO   `gate-min.active.json` declara EXACTAMENTE los siete controles: si se quita uno, el banco no mide
              menos, se niega a medir (NO_MEDIDO, exit 2). Ese es el fail-closed de la puerta.
-  CONTROLES  H1-H6 muerden de verdad: cada control tiene su fixture que lo pone en rojo, y un repo sano queda
+  CONTROLES  H1-H7 muerden de verdad: cada control tiene su fixture que lo pone en rojo, y un repo sano queda
              verde. Ademas los excluidos (`bundle`, `.git`) y las plantillas `.env.example` no se confunden.
   MUTANTES   se mutan el workflow reutilizable, el caller y la accion de gitleaks sobre el texto revisado y se
              exige que el banco lo detecte: job renombrado, runs-on por variable, permisos de mas, `paths`,
@@ -373,6 +373,15 @@ class ControlesQueMuerden(unittest.TestCase):
             )
         }), "H6")
         self.assertTrue(any("@v1" in x for x in h), h)
+        # Pin CORTO (7-39 hex): no es rama ni tag, pero tampoco SHA40. H6 debe morderlo igual.
+        # Mutante medido 28/11: aflojar SHA40_RE a {7,40} pasaba los 72 tests en verde sin este caso.
+        h = self.assertSoloRojo(dict(SANO, **{
+            ".github/workflows/pin_corto.yml": (
+                "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - uses: actions/checkout@3d3c42e\n"
+            )
+        }), "H6")
+        self.assertTrue(any("@3d3c42e" in x for x in h), h)
 
     def test_h7_runner_self_hosted_sin_so(self):
         h = self.assertSoloRojo(dict(SANO, **{
